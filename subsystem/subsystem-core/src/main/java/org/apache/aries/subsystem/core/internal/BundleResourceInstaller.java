@@ -14,6 +14,7 @@
 package org.apache.aries.subsystem.core.internal;
 
 import java.io.InputStream;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -170,10 +171,13 @@ public class BundleResourceInstaller extends ResourceInstaller {
 	
 	public Resource install() {
 		BundleRevision revision;
-		if (resource instanceof BundleRevision)
+		if (resource instanceof BundleRevision) {
 			revision = (BundleRevision)resource;
+		}
+		else if (resource instanceof BundleRevisionResource) {
+		    revision = ((BundleRevisionResource)resource).getRevision();
+		}
 		else {
-			ThreadLocalSubsystem.set(provisionTo);
 			try {
 				revision = installBundle();
 			}
@@ -188,7 +192,10 @@ public class BundleResourceInstaller extends ResourceInstaller {
 	
 	private BundleRevision installBundle() throws Exception {
 		final Bundle bundle;
-		InputStream is = (InputStream)resource.getClass().getMethod("getContent").invoke(resource);
+		Method getContent = resource.getClass().getMethod("getContent");
+		getContent.setAccessible(true);
+		InputStream is = (InputStream)getContent.invoke(resource);
+		ThreadLocalSubsystem.set(provisionTo);
 		try {
 			bundle = provisionTo.getRegion().installBundleAtLocation(getLocation(), is);
 		}
@@ -196,6 +203,7 @@ public class BundleResourceInstaller extends ResourceInstaller {
 			throw new SubsystemException(e);
 		}
 		finally {
+			ThreadLocalSubsystem.remove();
 			// Although Region.installBundle ultimately calls BundleContext.install,
 			// which closes the input stream, an exception may occur before this
 			// happens. Also, the Region API does not guarantee the stream will

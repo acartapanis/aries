@@ -1,15 +1,20 @@
 /*
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *   http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 package org.apache.aries.subsystem.core.internal;
 
@@ -41,17 +46,13 @@ import org.apache.aries.subsystem.core.archive.SubsystemImportServiceRequirement
 import org.apache.aries.subsystem.core.archive.SubsystemManifest;
 import org.apache.aries.util.filesystem.FileSystem;
 import org.apache.aries.util.filesystem.IDirectory;
-import org.apache.aries.util.manifest.ManifestHeaderProcessor;
 import org.eclipse.equinox.region.Region;
 import org.eclipse.equinox.region.RegionDigraph;
 import org.eclipse.equinox.region.RegionFilter;
 import org.eclipse.equinox.region.RegionFilterBuilder;
 import org.osgi.framework.Bundle;
-import org.osgi.framework.BundleContext;
 import org.osgi.framework.BundleException;
 import org.osgi.framework.InvalidSyntaxException;
-import org.osgi.framework.ServiceReference;
-import org.osgi.framework.hooks.weaving.WeavingHook;
 import org.osgi.framework.namespace.ExecutionEnvironmentNamespace;
 import org.osgi.framework.namespace.IdentityNamespace;
 import org.osgi.framework.namespace.NativeNamespace;
@@ -373,12 +374,18 @@ public class SubsystemResource implements Resource {
 			setImportIsolationPolicy(resolution);
 			for (Map.Entry<Resource, List<Wire>> entry : resolution.entrySet()) {
 				Resource key = entry.getKey();
-				if (!contentHeader.contains(key)) {
+				String type = ResourceHelper.getTypeAttribute(key);
+				// Do not include synthetic resources in the dependencies.
+				if (!Constants.ResourceTypeSynthesized.equals(type)
+						&& !contentHeader.contains(key)) {
 					addDependency(key);
 				}
 				for (Wire wire : entry.getValue()) {
 					Resource provider = wire.getProvider();
-					if (!contentHeader.contains(provider)) {
+					type = ResourceHelper.getTypeAttribute(provider);
+					// Do not include synthetic resources in the dependencies.
+					if (!Constants.ResourceTypeSynthesized.equals(type)
+							&& !contentHeader.contains(provider)) {
 						addDependency(provider);
 					}
 				}
@@ -420,7 +427,7 @@ public class SubsystemResource implements Resource {
 	}
 
 	private ProvisionResourceHeader computeProvisionResourceHeader() {
-		Collection<Resource> dependencies = getDepedencies();
+		Collection<Resource> dependencies = getDependencies();
 		if (dependencies.isEmpty())
 			return null;
 		return ProvisionResourceHeader.newInstance(dependencies);
@@ -478,16 +485,27 @@ public class SubsystemResource implements Resource {
 				}
 			}
 		}
+		// First search the local repository.
 		map = resource.getLocalRepository().findProviders(Collections.singleton(requirement));
-		if (map.containsKey(requirement)) {
-			Collection<Capability> capabilities = map.get(requirement);
-			if (!capabilities.isEmpty())
-				return capabilities.iterator().next().getResource();
+		Collection<Capability> capabilities = map.get(requirement);
+		if (capabilities.isEmpty()) {
+			// Nothing found in the local repository so search the repository services.
+			capabilities = new RepositoryServiceRepository().findProviders(requirement);
 		}
-		Collection<Capability> capabilities = new RepositoryServiceRepository().findProviders(requirement);
-		if (!capabilities.isEmpty())
-			return capabilities.iterator().next().getResource();
-		return null;
+		if (capabilities.isEmpty()) {
+			// Nothing found period.
+			return null;
+		}
+		for (Capability capability : capabilities) {
+			if (!IdentityNamespace.TYPE_FRAGMENT.equals(
+					capability.getAttributes().get(IdentityNamespace.CAPABILITY_TYPE_ATTRIBUTE))) {
+				// Favor the first resource that is not a fragment bundle.
+				// See ARIES-1425.
+				return capability.getResource();
+			}
+		}
+		// Nothing here but fragment bundles. Return the first one.
+		return capabilities.iterator().next().getResource();
 	}
 
 	private Resource findContent(DeployedContentHeader.Clause clause) throws BundleException, IOException, InvalidSyntaxException, URISyntaxException {
@@ -533,7 +551,7 @@ public class SubsystemResource implements Resource {
 		return result;
 	}
 
-	private Collection<Resource> getDepedencies() {
+	private Collection<Resource> getDependencies() {
 		Collection<Resource> result = new ArrayList<Resource>(installableDependencies.size() + sharedDependencies.size());
 		result.addAll(installableDependencies);
 		result.addAll(sharedDependencies);
@@ -548,6 +566,10 @@ public class SubsystemResource implements Resource {
 	boolean isComposite() {
 		String type = resource.getSubsystemManifest().getSubsystemTypeHeader().getType();
 		return SubsystemConstants.SUBSYSTEM_TYPE_COMPOSITE.equals(type);
+	}
+	
+	boolean isContent(Resource resource) {
+	   return installableContent.contains(resource) || sharedContent.contains(resource); 
 	}
 	
 	private boolean isInstallable(Resource resource) {
@@ -594,26 +616,41 @@ public class SubsystemResource implements Resource {
 			List<Wire> wires = resolution.get(resource);
 			for (Wire wire : wires) {
 				Resource provider = wire.getProvider();
+				// First check: If the provider is content there is no need to
+				// update the sharing policy because the capability is already
+				// visible.
 				if (contentHeader.contains(provider)) {
-					// The provider is content so the requirement does
-					// not need to become part of the sharing policy.
 					continue;
 				}
-				// The provider is not content, so the requirement must
-				// be added to the sharing policy.
+				// Second check: If the provider is synthesized but not offering
+				// a MissingCapability, then the resource is acting as a
+				// placeholder as part of the Application-ImportService header
+				// functionality, and the sharing policy does not need to be
+				// updated.
+				// Do not exclude resources providing a MissingCapability
+				// even though they are synthesized. These are added by the
+				// resolve context to ensure that unsatisfied optional
+				// requirements become part of the sharing policy.
+				if (!(wire.getCapability() instanceof DependencyCalculator.MissingCapability)
+						&& Constants.ResourceTypeSynthesized.equals(ResourceHelper.getTypeAttribute(provider))) {
+					continue;
+				}
+				// The requirement must be added to the sharing policy.
 				Requirement requirement = wire.getRequirement();
-				String namespace = requirement.getNamespace();
-				if (ServiceNamespace.SERVICE_NAMESPACE.equals(namespace)) {
-					// The osgi.service namespace must be translated to one
-					// that region digraph understands.
-					namespace = RegionFilter.VISIBLE_SERVICE_NAMESPACE;
+				List<String> namespaces = new ArrayList<String>(2);
+				namespaces.add(requirement.getNamespace());
+				if (ServiceNamespace.SERVICE_NAMESPACE.equals(namespaces.get(0))) {
+					// Both service capabilities and services must be visible.
+					namespaces.add(RegionFilter.VISIBLE_SERVICE_NAMESPACE);
 				}
 				String filter = requirement.getDirectives().get(Namespace.REQUIREMENT_FILTER_DIRECTIVE);
 				if (filter == null) {
-					builder.allowAll(namespace);
+					for (String namespace : namespaces)
+						builder.allowAll(namespace);
 				}
 				else {
-					builder.allow(namespace, filter);
+					for (String namespace : namespaces)
+						builder.allow(namespace, filter);
 				}
 			}
 		}

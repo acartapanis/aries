@@ -42,6 +42,7 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.Map.Entry;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -148,6 +149,8 @@ public abstract class SubsystemTest extends AbstractIntegrationTest {
 				mavenBundle("org.easymock",					"easymock").versionAsInProject(),
                 mavenBundle("org.ops4j.pax.logging",        "pax-logging-api").versionAsInProject(),
                 mavenBundle("org.ops4j.pax.logging",        "pax-logging-service").versionAsInProject(),
+                mavenBundle("org.ops4j.pax.tinybundles",    "tinybundles").versionAsInProject(),
+                mavenBundle("biz.aQute.bnd",                "bndlib").versionAsInProject(),
 //				org.ops4j.pax.exam.container.def.PaxRunnerOptions.vmOption("-Xdebug -Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=7777"),
 		};
 	}
@@ -269,7 +272,7 @@ public abstract class SubsystemTest extends AbstractIntegrationTest {
 		assertConstituent(subsystem, symbolicName, version, IdentityNamespace.TYPE_BUNDLE);
 	}
 
-	protected void assertContituent(Subsystem subsystem, String symbolicName, String type) {
+	protected void assertConstituent(Subsystem subsystem, String symbolicName, String type) {
 		assertConstituent(subsystem, symbolicName, Version.emptyVersion, type);
 	}
 
@@ -555,10 +558,13 @@ public abstract class SubsystemTest extends AbstractIntegrationTest {
 		}
 		createBundle(emptyFiles, headerMap);
 	}
+	
+	protected static void createBundle(List<String> emptyFiles, Map<String, String> headers) throws IOException {
+		createBundle(headers.get(Constants.BUNDLE_SYMBOLICNAME), emptyFiles, headers);
+	}
 
-	private static void createBundle(List<String> emptyFiles, Map<String, String> headers) throws IOException
+	protected static void createBundle(String fileName, List<String> emptyFiles, Map<String, String> headers) throws IOException
 	{
-		String symbolicName = headers.get(Constants.BUNDLE_SYMBOLICNAME);
 		JarFixture bundle = ArchiveFixture.newJar();
 		ManifestFixture manifest = bundle.manifest();
 		for (Entry<String, String> header : headers.entrySet()) {
@@ -567,7 +573,7 @@ public abstract class SubsystemTest extends AbstractIntegrationTest {
 		for (String path : emptyFiles) {
 			bundle.file(path).end();
 		}
-		write(symbolicName, bundle);
+		write(fileName, bundle);
 	}
 
 	protected static void createBlueprintBundle(String symbolicName, String blueprintXml)
@@ -787,6 +793,10 @@ public abstract class SubsystemTest extends AbstractIntegrationTest {
 	private Subsystem installSubsystemFromFile(File file) throws Exception {
 		return installSubsystem(getRootSubsystem(), file.toURI().toURL().toExternalForm());
 	}
+	
+	protected Subsystem installSubsystemFromFile(Subsystem parent, File file, String location) throws Exception {
+		return installSubsystem(parent, location, new URL(file.toURI().toURL().toExternalForm()).openStream());
+	}
 
 	protected Subsystem installSubsystem(String location) throws Exception {
 		return installSubsystem(getRootSubsystem(), location);
@@ -838,6 +848,20 @@ public abstract class SubsystemTest extends AbstractIntegrationTest {
 			resources[i++] = (Resource)createBundleRepositoryContent(file);
 		}
 		registerRepositoryService(resources);
+	}
+	
+	protected void removeConnectionWithParent(Subsystem subsystem) throws BundleException {
+		Region tail = getRegion(subsystem);
+		RegionDigraph digraph = tail.getRegionDigraph();
+		RegionDigraph copy = digraph.copy();
+		Region tailCopy = copy.getRegion(tail.getName());
+		Set<Long> ids = tail.getBundleIds();
+		copy.removeRegion(tailCopy);
+		tailCopy= copy.createRegion(tailCopy.getName());
+		for (long id : ids) {
+			tailCopy.addBundle(id);
+		}
+		digraph.replace(copy);
 	}
 
 	protected void restartSubsystemsImplBundle() throws BundleException {

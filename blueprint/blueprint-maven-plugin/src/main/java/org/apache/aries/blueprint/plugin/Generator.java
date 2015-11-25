@@ -20,6 +20,9 @@ package org.apache.aries.blueprint.plugin;
 
 import java.io.OutputStream;
 import java.lang.reflect.Field;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
 
 import javax.persistence.PersistenceContext;
 import javax.persistence.PersistenceUnit;
@@ -29,7 +32,6 @@ import javax.xml.stream.XMLStreamWriter;
 
 import org.apache.aries.blueprint.plugin.model.Bean;
 import org.apache.aries.blueprint.plugin.model.Context;
-import org.apache.aries.blueprint.plugin.model.OsgiServiceRef;
 import org.apache.aries.blueprint.plugin.model.ProducedBean;
 import org.apache.aries.blueprint.plugin.model.Property;
 import org.apache.aries.blueprint.plugin.model.PropertyWriter;
@@ -38,15 +40,21 @@ import org.apache.aries.blueprint.plugin.model.TransactionalDef;
 public class Generator implements PropertyWriter {
     private static final String NS_BLUEPRINT = "http://www.osgi.org/xmlns/blueprint/v1.0.0";
     private static final String NS_EXT = "http://aries.apache.org/blueprint/xmlns/blueprint-ext/v1.0.0";
-    private static final String NS_JPA = "http://aries.apache.org/xmlns/jpa/v1.1.0";
-    private static final String NS_TX = "http://aries.apache.org/xmlns/transactions/v1.1.0";
-
+    public static final String NS_JPA = "http://aries.apache.org/xmlns/jpa/v1.1.0";
+    public static final String NS_JPA2 = "http://aries.apache.org/xmlns/jpa/v2.0.0";
+    public static final String NS_TX = "http://aries.apache.org/xmlns/transactions/v1.2.0";
+    public static final String NS_TX2 = "http://aries.apache.org/xmlns/transactions/v2.0.0";
+    
     private Context context;
     private XMLStreamWriter writer;
+    private Set<String> namespaces;
 
-    public Generator(Context context, OutputStream os) throws XMLStreamException {
+    public Generator(Context context, OutputStream os, Set<String> namespaces) throws XMLStreamException {
         this.context = context;
-        
+        this.namespaces = namespaces;
+        if (this.namespaces == null) {
+            this.namespaces = new HashSet<String>(Arrays.asList(NS_TX2, NS_JPA2));
+        }
         XMLOutputFactory factory = XMLOutputFactory.newInstance();
         writer = factory.createXMLStreamWriter(os);
     }
@@ -56,6 +64,20 @@ public class Generator implements PropertyWriter {
             writer.writeStartDocument();
             writer.writeCharacters("\n");
             writeBlueprint();
+            writer.writeCharacters("\n");
+            
+            if (namespaces.contains(NS_JPA2) && isJpaUsed()) {
+                writer.writeEmptyElement(NS_JPA2, "enable");
+                writer.writeCharacters("\n");
+            }
+            if (namespaces.contains(NS_TX) && isJtaUsed()) {
+                writer.writeEmptyElement(NS_TX, "enable-annotations");
+                writer.writeCharacters("\n");
+            }
+            if (namespaces.contains(NS_TX2) && isJtaUsed()) {
+                writer.writeEmptyElement(NS_TX2, "enable");
+                writer.writeCharacters("\n");
+            }
             for (Bean bean : context.getBeans()) {
                 writeBeanStart(bean);
                 bean.writeProperties(this);
@@ -63,7 +85,7 @@ public class Generator implements PropertyWriter {
                 writer.writeCharacters("\n");
             }
             
-            writeServiceRefs();
+            new OsgiServiceRefWriter(writer).write(context.getServiceRefs());
             new OsgiServiceProviderWriter(writer).write(context.getBeans());
             
             writer.writeEndElement();
@@ -76,15 +98,46 @@ public class Generator implements PropertyWriter {
         }
     }
 
+    private boolean isJpaUsed() {
+        boolean jpaUsed = false;
+        for (Bean bean : context.getBeans()) {
+        if (bean.persistenceFields.length > 0) {
+            jpaUsed = true;
+        }
+        }
+        return jpaUsed;
+    }
+
+    private boolean isJtaUsed() {
+        boolean jtaUsed = false;
+        for (Bean bean : context.getBeans()) {
+            if (bean.transactionDef != null) {
+                jtaUsed = true;
+            }
+
+        }
+        return jtaUsed;
+    }
+
     private void writeBlueprint() throws XMLStreamException {
         writer.writeStartElement("blueprint");
         writer.writeDefaultNamespace(NS_BLUEPRINT);
         writer.writeNamespace("ext", NS_EXT);
-        writer.writeNamespace("jpa", NS_JPA);
-        writer.writeNamespace("tx", NS_TX);
-        writer.writeCharacters("\n");
+        for (String namespace : namespaces) {
+            String prefix = getPrefixForNamesapace(namespace);
+            writer.writeNamespace(prefix, namespace);
+        }
     }
     
+    private String getPrefixForNamesapace(String namespace) {
+        if (namespace.contains("jpa")) {
+            return "jpa";
+        } if (namespace.contains("transactions")) {
+            return "tx";
+        }
+        return "other";
+    }
+
     public void writeBeanStart(Bean bean) throws XMLStreamException {
         writer.writeStartElement("bean");
         writer.writeAttribute("id", bean.id);
@@ -100,13 +153,17 @@ public class Generator implements PropertyWriter {
             writer.writeAttribute("destroy-method", bean.destroyMethod);
         }
         writer.writeCharacters("\n");
-        writeTransactional(bean.transactionDef);
-
-        writePersistenceFields(bean.persistenceFields);
+        
+        if (namespaces.contains(NS_TX)) {
+            writeTransactional(bean.transactionDef);
+        }
+        if (namespaces.contains(NS_JPA)) {
+            writePersistenceFields(bean.persistenceFields);
+        }
     }
     
     private void writeFactory(ProducedBean bean) throws XMLStreamException {
-        writer.writeAttribute("factory-ref", bean.factoryBeanId);
+        writer.writeAttribute("factory-ref", bean.factoryBean.id);
         writer.writeAttribute("factory-method", bean.factoryMethod);
     }
 
@@ -145,22 +202,6 @@ public class Generator implements PropertyWriter {
             writer.writeAttribute("property", field.getName());
             writer.writeCharacters("\n");
         }
-    }
-
-    private void writeServiceRefs() throws XMLStreamException {
-        for (OsgiServiceRef serviceBean : context.getServiceRefs()) {
-            writeServiceRef(serviceBean);
-        }
-    }
-
-    private void writeServiceRef(OsgiServiceRef serviceBean) throws XMLStreamException {
-        writer.writeEmptyElement("reference");
-        writer.writeAttribute("id", serviceBean.id);
-        writer.writeAttribute("interface", serviceBean.clazz.getName());
-        if (serviceBean.filter != null && !"".equals(serviceBean.filter)) {
-            writer.writeAttribute("filter", serviceBean.filter);
-        }
-        writer.writeCharacters("\n");
     }
 
     @Override

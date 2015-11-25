@@ -46,6 +46,7 @@ import org.apache.aries.subsystem.core.archive.SubsystemManifest;
 import org.apache.aries.subsystem.core.archive.SubsystemSymbolicNameHeader;
 import org.apache.aries.subsystem.core.archive.SubsystemTypeHeader;
 import org.apache.aries.subsystem.core.archive.SubsystemVersionHeader;
+import org.apache.aries.subsystem.core.capabilityset.SimpleFilter;
 import org.apache.aries.util.filesystem.FileSystem;
 import org.apache.aries.util.filesystem.IDirectory;
 import org.apache.aries.util.filesystem.IFile;
@@ -198,7 +199,7 @@ public class RawSubsystemResource implements Resource {
 			capBuilder.namespace(ServiceNamespace.SERVICE_NAMESPACE);
 			capBuilder.attribute(ServiceNamespace.CAPABILITY_OBJECTCLASS_ATTRIBUTE, objectClasses);
 			if (filter != null)
-				capBuilder.attributes(new HashMap<String, Object>(ManifestHeaderProcessor.parseFilter(filter)));
+				capBuilder.attributes(new HashMap<String, Object>(SimpleFilter.attributes(filter)));
 			capBuilder.attribute("service.imported", "");
 			capBuilder.resource(fakeResource);
 			modifiableCaps.add(capBuilder.build());
@@ -328,7 +329,7 @@ public class RawSubsystemResource implements Resource {
 		for (Requirement requirement : requirements) {
 			if (!PackageNamespace.PACKAGE_NAMESPACE.equals(requirement.getNamespace()))
 				continue;
-			clauses.add(new ImportPackageHeader.Clause(requirement));
+			clauses.add(ImportPackageHeader.Clause.valueOf(requirement));
 		}
 		if (clauses.isEmpty())
 			return null;
@@ -352,7 +353,7 @@ public class RawSubsystemResource implements Resource {
 		for (Requirement requirement : requirements) {
 			if (!BundleNamespace.BUNDLE_NAMESPACE.equals(requirement.getNamespace()))
 				continue;
-			clauses.add(new RequireBundleHeader.Clause(requirement));
+			clauses.add(RequireBundleHeader.Clause.valueOf(requirement));
 		}
 		if (clauses.isEmpty())
 			return null;
@@ -366,11 +367,13 @@ public class RawSubsystemResource implements Resource {
 		ArrayList<RequireCapabilityHeader.Clause> clauses = new ArrayList<RequireCapabilityHeader.Clause>();
 		for (Requirement requirement : requirements) {
 			String namespace = requirement.getNamespace();
-			if (namespace.startsWith("osgi.") &&
-					// Don't filter out the osgi.ee namespace.
-					!namespace.equals(ExecutionEnvironmentNamespace.EXECUTION_ENVIRONMENT_NAMESPACE))
+			if (namespace.startsWith("osgi.") && !(
+					// Don't filter out the osgi.ee namespace...
+					namespace.equals(ExecutionEnvironmentNamespace.EXECUTION_ENVIRONMENT_NAMESPACE) ||
+					// ...or the osgi.service namespace.
+					namespace.equals(ServiceNamespace.SERVICE_NAMESPACE)))
 				continue;
-			clauses.add(new RequireCapabilityHeader.Clause(requirement));
+			clauses.add(RequireCapabilityHeader.Clause.valueOf(requirement));
 		}
 		if (clauses.isEmpty())
 			return null;
@@ -404,6 +407,12 @@ public class RawSubsystemResource implements Resource {
 			if (!capabilities.isEmpty()) {
 				resources.add(capabilities.iterator().next().getResource());
 			}
+		}
+		if (fakeImportServiceResource != null) {
+			// Add the fake resource so the dependency calculator knows not to
+			// return service requirements that are included in 
+			// Application-ImportService.
+			resources.add(fakeImportServiceResource);
 		}
 		// Now compute the dependencies of the content resources. These are
 		// dependencies not satisfied by the content resources themselves.
@@ -495,7 +504,7 @@ public class RawSubsystemResource implements Resource {
 		for (Requirement requirement : requirements) {
 			if (!ServiceNamespace.SERVICE_NAMESPACE.equals(requirement.getNamespace()))
 				continue;
-			clauses.add(new SubsystemImportServiceHeader.Clause(requirement));
+			clauses.add(SubsystemImportServiceHeader.Clause.valueOf(requirement));
 		}
 		if (clauses.isEmpty())
 			return null;
