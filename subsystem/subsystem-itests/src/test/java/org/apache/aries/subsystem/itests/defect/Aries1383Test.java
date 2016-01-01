@@ -9,7 +9,6 @@ import static org.junit.Assert.fail;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.EnumSet;
@@ -37,6 +36,7 @@ import org.easymock.internal.matchers.Null;
 import org.junit.Test;
 import org.ops4j.pax.tinybundles.core.InnerClassStrategy;
 import org.ops4j.pax.tinybundles.core.TinyBundles;
+import org.osgi.framework.Bundle;
 import org.osgi.framework.BundleActivator;
 import org.osgi.framework.BundleContext;
 import org.osgi.framework.Constants;
@@ -95,9 +95,6 @@ public class Aries1383Test extends SubsystemTest {
 	private static final String PACKAGE_D = SYMBOLICNAME_PREFIX + "d";
 	private static final String SUBSYSTEM_MANIFEST_FILE = "OSGI-INF/SUBSYSTEM.MF";
 	
-	private final List<Subsystem> stoppableSubsystems = new ArrayList<Subsystem>();
-	private final List<Subsystem> uninstallableSubsystems = new ArrayList<Subsystem>();
-	
 	/*
 	 * (1) A set of subsystems with interleaving content dependencies are able 
 	 * to be independently, simultaneously, and successfully installed and 
@@ -124,7 +121,7 @@ public class Aries1383Test extends SubsystemTest {
 				new Callable<Subsystem>() {
 					@Override
 					public Subsystem call() throws Exception {
-						return installSubsystem(
+						Subsystem result = installSubsystem(
 								c1,
 								"a1", 
 								new SubsystemArchiveBuilder()
@@ -140,13 +137,15 @@ public class Aries1383Test extends SubsystemTest {
 														.build())
 										.build(),
 								false);
+						uninstallableSubsystems.add(result);
+						return result;
 					}
 					
 				},
 				new Callable<Subsystem>() {
 					@Override
 					public Subsystem call() throws Exception {
-						return installSubsystem(
+						Subsystem result = installSubsystem(
 								c1,
 								"f1", 
 								new SubsystemArchiveBuilder()
@@ -163,13 +162,15 @@ public class Aries1383Test extends SubsystemTest {
 														.build())
 										.build(),
 								false);
+						uninstallableSubsystems.add(result);
+						return result;
 					}
 					
 				},
 				new Callable<Subsystem>() {
 					@Override
 					public Subsystem call() throws Exception {
-						return installSubsystem(
+						Subsystem result = installSubsystem(
 								c1,
 								"f2", 
 								new SubsystemArchiveBuilder()
@@ -187,13 +188,15 @@ public class Aries1383Test extends SubsystemTest {
 														.build())
 										.build(),
 								false);
+						uninstallableSubsystems.add(result);
+						return result;
 					}
 					
 				},
 				new Callable<Subsystem>() {
 					@Override
 					public Subsystem call() throws Exception {
-						return installSubsystem(
+						Subsystem result = installSubsystem(
 								c1,
 								"c2", 
 								new SubsystemArchiveBuilder()
@@ -212,6 +215,8 @@ public class Aries1383Test extends SubsystemTest {
 														.build())
 										.build(),
 								false);
+						uninstallableSubsystems.add(result);
+						return result;
 					}
 					
 				}
@@ -219,16 +224,12 @@ public class Aries1383Test extends SubsystemTest {
 		ExecutorService executor = Executors.newFixedThreadPool(4);
 		List<Future<Subsystem>> installFutures = executor.invokeAll(Arrays.asList(installCallables));
 		final Subsystem a1 = installFutures.get(0).get();
-		uninstallableSubsystems.add(a1);
 		assertConstituent(a1, "b1");
 		final Subsystem f1 = installFutures.get(1).get();
-		uninstallableSubsystems.add(f1);
 		assertConstituent(f1, "b2");
 		final Subsystem f2 = installFutures.get(2).get();
-		uninstallableSubsystems.add(f2);
 		assertConstituent(f2, "b4");
 		final Subsystem c2 = installFutures.get(3).get();
-		uninstallableSubsystems.add(c2);
 		assertConstituent(c2, "b3");
 		@SuppressWarnings("unchecked")
 		Callable<Null>[] startCallables = new Callable[] {
@@ -239,6 +240,7 @@ public class Aries1383Test extends SubsystemTest {
 					assertEvent(a1, State.INSTALLED, subsystemEvents.poll(a1.getSubsystemId(), 5000));
 					assertEvent(a1, State.RESOLVING, subsystemEvents.poll(a1.getSubsystemId(), 5000));
 					assertEvent(a1, State.RESOLVED, subsystemEvents.poll(a1.getSubsystemId(), 5000));
+					stoppableSubsystems.add(a1);
 					return null;
 				}
 			},
@@ -249,6 +251,7 @@ public class Aries1383Test extends SubsystemTest {
 					assertEvent(f1, State.INSTALLED, subsystemEvents.poll(f1.getSubsystemId(), 5000));
 					assertEvent(f1, State.RESOLVING, subsystemEvents.poll(f1.getSubsystemId(), 5000));
 					assertEvent(f1, State.RESOLVED, subsystemEvents.poll(f1.getSubsystemId(), 5000));
+					stoppableSubsystems.add(f1);
 					return null;
 				}
 			},
@@ -259,6 +262,7 @@ public class Aries1383Test extends SubsystemTest {
 					assertEvent(f2, State.INSTALLED, subsystemEvents.poll(f2.getSubsystemId(), 5000));
 					assertEvent(f2, State.RESOLVING, subsystemEvents.poll(f2.getSubsystemId(), 5000));
 					assertEvent(f2, State.RESOLVED, subsystemEvents.poll(f2.getSubsystemId(), 5000));
+					stoppableSubsystems.add(f2);
 					return null;
 				}
 			},
@@ -269,19 +273,16 @@ public class Aries1383Test extends SubsystemTest {
 					assertEvent(c2, State.INSTALLED, subsystemEvents.poll(c2.getSubsystemId(), 5000));
 					assertEvent(c2, State.RESOLVING, subsystemEvents.poll(c2.getSubsystemId(), 5000));
 					assertEvent(c2, State.RESOLVED, subsystemEvents.poll(c2.getSubsystemId(), 5000));
+					stoppableSubsystems.add(c2);
 					return null;
 				}
 			}
 		};
 		List<Future<Null>> startFutures = executor.invokeAll(Arrays.asList(startCallables));
 		startFutures.get(0).get();
-		stoppableSubsystems.add(a1);
 		startFutures.get(1).get();
-		stoppableSubsystems.add(f1);
 		startFutures.get(2).get();
-		stoppableSubsystems.add(f2);
 		startFutures.get(3).get();
-		stoppableSubsystems.add(c2);
 	}
 	
 	/*
@@ -1816,6 +1817,27 @@ public class Aries1383Test extends SubsystemTest {
 				.build();
 	}
 	
+	public static interface TestService {}
+	
+	public static class TestServiceImpl implements TestService {}
+	
+	public static class TestServiceActivator implements BundleActivator {
+		private ServiceRegistration<TestService> reg;
+		
+		@Override
+		public void start(BundleContext context) throws Exception {
+			reg = context.registerService(
+					TestService.class, 
+					new TestServiceImpl(), 
+					null);
+		}
+
+		@Override
+		public void stop(BundleContext context) throws Exception {
+			reg.unregister();
+		}
+	}
+	
 	private static class BundleStartFailureActivator implements BundleActivator {
 		@Override
 		public void start(BundleContext context) throws Exception {
@@ -1827,24 +1849,6 @@ public class Aries1383Test extends SubsystemTest {
 			// Nothing.
 		}
 	}
-	
-	@Override
-    public void setUp() throws Exception {
-        super.setUp();
-        stoppableSubsystems.clear();
-        uninstallableSubsystems.clear();
-    }
-	
-	@Override
-    public void tearDown() throws Exception {
-		for (Subsystem subsystem : stoppableSubsystems) {
-			stopSubsystemSilently(subsystem);
-		}
-		for (Subsystem subsystem : uninstallableSubsystems) {
-			uninstallSubsystemSilently(subsystem);
-		}
-        super.tearDown();
-    }
 	
 	@Test
 	public void testInterleavingContentDependencies() throws Exception {
@@ -1896,6 +1900,7 @@ public class Aries1383Test extends SubsystemTest {
 		startSubsystem(c1, false);
 		stoppableSubsystems.add(c1);
 		assertState(EnumSet.of(State.RESOLVED, State.ACTIVE), c2);
+		stoppableSubsystems.add(c2);
 	}
 	
 	@Test
@@ -1922,6 +1927,7 @@ public class Aries1383Test extends SubsystemTest {
 						.build(),
 				false
 		);
+		uninstallableSubsystems.add(c1);
 		Subsystem c2 = installSubsystem(
 				root,
 				"c2",
@@ -1943,6 +1949,7 @@ public class Aries1383Test extends SubsystemTest {
 						.build(),
 				false
 		);
+		uninstallableSubsystems.add(c2);
 		assertChild(root, "c1", null, SubsystemConstants.SUBSYSTEM_TYPE_COMPOSITE);
 		assertChild(root, "c2", null, SubsystemConstants.SUBSYSTEM_TYPE_COMPOSITE);
 		restartSubsystemsImplBundle();
@@ -2140,5 +2147,254 @@ public class Aries1383Test extends SubsystemTest {
 		catch (SubsystemException e) {
 			e.printStackTrace();
 		}
+	}
+	
+	@Test
+	public void testMatchingCapabilityInDisconnectedRegion() throws Exception {
+		Subsystem root = getRootSubsystem();
+		BundleArchiveBuilder b1Builder = new BundleArchiveBuilder()
+				.symbolicName("b1")
+				.exportPackage("b1");
+		Bundle b1 = root.getBundleContext().installBundle("b1", b1Builder.build());
+		try {
+			Subsystem a1 = installSubsystem(
+					root,
+					"a1",
+					new SubsystemArchiveBuilder()
+							.symbolicName("a1")
+							.type(SubsystemConstants.SUBSYSTEM_TYPE_APPLICATION
+									+ ';'
+									+ AriesProvisionDependenciesDirective.RESOLVE.toString()
+									+ ';'
+									+ SubsystemConstants.PROVISION_POLICY_DIRECTIVE
+									+ ":="
+									+ SubsystemConstants.PROVISION_POLICY_ACCEPT_DEPENDENCIES)
+							.build(),
+					false
+			);
+			uninstallableSubsystems.add(a1);
+			startSubsystem(a1, false);
+			stoppableSubsystems.add(a1);
+			removeConnectionWithParent(a1);
+			Subsystem a2 = installSubsystem(
+					a1,
+					"a2",
+					new SubsystemArchiveBuilder()
+							.symbolicName("a2")
+							.type(SubsystemConstants.SUBSYSTEM_TYPE_APPLICATION)
+							.content("b2")
+							.bundle(
+									"b2", 
+									new BundleArchiveBuilder()
+											.symbolicName("b2")
+											.importPackage("b1")
+											.build())
+							.bundle(
+									"b1",
+									b1Builder.build())
+							.build(),
+					false
+			);
+			uninstallableSubsystems.add(a2);
+			assertState(State.INSTALLING, a2);
+			assertNotConstituent(a1, "b1");
+			try {
+				startSubsystem(a2, false);
+				stoppableSubsystems.add(a2);
+				assertConstituent(a1, "b1");
+			}
+			catch (SubsystemException e) {
+				e.printStackTrace();
+				fail("Subsystem should have started");
+			}
+		}
+		finally {
+			uninstallSilently(b1);
+		}
+	}
+	
+	@Test
+	public void testProvideCapabilityNamespaceOnly() throws Exception {
+		Subsystem root = getRootSubsystem();
+		Subsystem c1 = installSubsystem(
+				root,
+				"c1", 
+				new SubsystemArchiveBuilder()
+						.symbolicName("c1")
+						.type(SubsystemConstants.SUBSYSTEM_TYPE_COMPOSITE)
+						.provideCapability("y")
+						.build());
+		uninstallableSubsystems.add(c1);
+		try {
+			startSubsystem(c1);
+			stoppableSubsystems.add(c1);
+		}
+		catch (SubsystemException e) {
+			e.printStackTrace();
+			fail("Subsystem should have started");
+		}
+	}
+	
+	@Test
+	public void testComApiComImplAppClient() throws Exception {
+		Subsystem root = getRootSubsystem();
+		final Subsystem shared = installSubsystem(
+				root,
+				"shared", 
+				new SubsystemArchiveBuilder()
+						.symbolicName("shared")
+						.type(SubsystemConstants.SUBSYSTEM_TYPE_COMPOSITE 
+								+ ';' 
+								+ AriesProvisionDependenciesDirective.RESOLVE.toString()
+								+ ';'
+								+ SubsystemConstants.PROVISION_POLICY_DIRECTIVE
+								+ ":="
+								+ SubsystemConstants.PROVISION_POLICY_ACCEPT_DEPENDENCIES)
+						.importPackage("org.osgi.framework")
+						.build(),
+				false
+		);
+		uninstallableSubsystems.add(shared);
+		shared.start();
+		stoppableSubsystems.add(shared);
+		@SuppressWarnings("unchecked")
+		Callable<Subsystem>[] installCallables = new Callable[] {
+				new Callable<Subsystem>() {
+					@Override
+					public Subsystem call() throws Exception {
+						Subsystem result = installSubsystem(
+								shared,
+								"client", 
+								new SubsystemArchiveBuilder()
+										.symbolicName("client")
+										.type(SubsystemConstants.SUBSYSTEM_TYPE_APPLICATION)
+										.bundle(
+												"client", 
+												new BundleArchiveBuilder()
+														.symbolicName("client")
+														.importPackage("org.apache.aries.subsystem.itests.defect")
+														.requireCapability("osgi.service;filter:=\"(objectClass="
+																+ TestService.class.getName()
+																+ ")\";effective:=active")
+														.build())
+										.build(),
+								false);
+						uninstallableSubsystems.add(result);
+						return result;
+					}
+					
+				},
+				new Callable<Subsystem>() {
+					@Override
+					public Subsystem call() throws Exception {
+						Subsystem result = installSubsystem(
+								shared,
+								"impl", 
+								new SubsystemArchiveBuilder()
+										.symbolicName("impl")
+										.type(SubsystemConstants.SUBSYSTEM_TYPE_COMPOSITE)
+										.content("impl;version=\"[0,0]\"")
+										.provideCapability("osgi.service;objectClass:List<String>=\"" 
+												+ TestService.class.getName() 
+												+ "\"")
+										.importPackage("org.osgi.framework")
+										.requireBundle("api")
+										.bundle(
+												"impl", 
+												new BundleArchiveBuilder()
+														.symbolicName("impl")
+														.provideCapability("osgi.service;objectClass:List<String>=\"" 
+																+ TestService.class.getName() 
+																+ "\"")
+														.importPackage("org.osgi.framework")
+														.requireBundle("api")
+														.clazz(TestServiceImpl.class)
+														.activator(TestServiceActivator.class)
+														.build())
+										.build(),
+								false);
+						uninstallableSubsystems.add(result);
+						return result;
+					}
+					
+				},
+				new Callable<Subsystem>() {
+					@Override
+					public Subsystem call() throws Exception {
+						Subsystem result = installSubsystem(
+								shared,
+								"api", 
+								new SubsystemArchiveBuilder()
+										.symbolicName("api")
+										.type(SubsystemConstants.SUBSYSTEM_TYPE_COMPOSITE)
+										.content("api;version=\"[0,0]\"")
+										.exportPackage("org.apache.aries.subsystem.itests.defect")
+										.provideCapability("osgi.wiring.bundle;osgi.wiring.bundle=api;bundle-version=0")
+										.bundle(
+												"api", 
+												new BundleArchiveBuilder()
+														.symbolicName("api")
+														.exportPackage("org.apache.aries.subsystem.itests.defect")
+														.clazz(TestService.class)
+														.build())
+										.build(),
+								false);
+						uninstallableSubsystems.add(result);
+						return result;
+					}
+					
+				}
+		};
+		ExecutorService executor = Executors.newFixedThreadPool(3);
+		List<Future<Subsystem>> installFutures = executor.invokeAll(Arrays.asList(installCallables));
+		final Subsystem a1 = installFutures.get(0).get();
+		final Subsystem c1 = installFutures.get(1).get();
+		final Subsystem c2 = installFutures.get(2).get();
+		@SuppressWarnings("unchecked")
+		Callable<Void>[] startCallables = new Callable[] {
+			new Callable<Void>() {
+				@Override
+				public Void call() throws Exception {
+					a1.start();
+					stoppableSubsystems.add(a1);
+					assertEvent(a1, State.INSTALLED, subsystemEvents.poll(a1.getSubsystemId(), 5000));
+					assertEvent(a1, State.RESOLVING, subsystemEvents.poll(a1.getSubsystemId(), 5000));
+					assertEvent(a1, State.RESOLVED, subsystemEvents.poll(a1.getSubsystemId(), 5000));
+					assertEvent(a1, State.STARTING, subsystemEvents.poll(a1.getSubsystemId(), 5000));
+					assertEvent(a1, State.ACTIVE, subsystemEvents.poll(a1.getSubsystemId(), 5000));
+					return null;
+				}
+			},
+			new Callable<Void>() {
+				@Override
+				public Void call() throws Exception {
+					c1.start();
+					stoppableSubsystems.add(c1);
+					assertEvent(c1, State.INSTALLED, subsystemEvents.poll(c1.getSubsystemId(), 5000));
+					assertEvent(c1, State.RESOLVING, subsystemEvents.poll(c1.getSubsystemId(), 5000));
+					assertEvent(c1, State.RESOLVED, subsystemEvents.poll(c1.getSubsystemId(), 5000));
+					assertEvent(c1, State.STARTING, subsystemEvents.poll(c1.getSubsystemId(), 5000));
+					assertEvent(c1, State.ACTIVE, subsystemEvents.poll(c1.getSubsystemId(), 5000));
+					return null;
+				}
+			},
+			new Callable<Void>() {
+				@Override
+				public Void call() throws Exception {
+					c2.start();
+					stoppableSubsystems.add(c2);
+					assertEvent(c2, State.INSTALLED, subsystemEvents.poll(c2.getSubsystemId(), 5000));
+					assertEvent(c2, State.RESOLVING, subsystemEvents.poll(c2.getSubsystemId(), 5000));
+					assertEvent(c2, State.RESOLVED, subsystemEvents.poll(c2.getSubsystemId(), 5000));
+					assertEvent(c2, State.STARTING, subsystemEvents.poll(c2.getSubsystemId(), 5000));
+					assertEvent(c2, State.ACTIVE, subsystemEvents.poll(c2.getSubsystemId(), 5000));
+					return null;
+				}
+			}
+		};
+		List<Future<Void>> startFutures = executor.invokeAll(Arrays.asList(startCallables));
+		startFutures.get(0).get();
+		startFutures.get(1).get();
+		startFutures.get(2).get();
 	}
 }

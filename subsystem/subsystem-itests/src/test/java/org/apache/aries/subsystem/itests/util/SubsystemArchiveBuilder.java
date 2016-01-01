@@ -63,6 +63,14 @@ public class SubsystemArchiveBuilder {
 		return header(Constants.IMPORT_PACKAGE, value);
 	}
 	
+	public SubsystemArchiveBuilder requireBundle(String value) {
+		return header(Constants.REQUIRE_BUNDLE, value);
+	}
+	
+	public SubsystemArchiveBuilder provideCapability(String value) {
+		return header(Constants.PROVIDE_CAPABILITY, value);
+	}
+	
 	public SubsystemArchiveBuilder subsystem(String name, InputStream value) {
 		return file(name + ESA_EXTENSION, value);
 	}

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -16,11 +16,26 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.aries.blueprint.plugin.test;
+package org.apache.aries.jpa.blueprint.impl;
 
-import javax.inject.Named;
+import javax.persistence.EntityManager;
+import javax.persistence.EntityManagerFactory;
+import javax.persistence.PersistenceContext;
+import javax.persistence.PersistenceUnit;
 
-@Named("my1")
-public class ServiceAImpl1 implements ServiceA {
+public class TestClass {
+
+    @PersistenceContext(unitName="test")
+    EntityManager em;
     
+    public void setEm(EntityManager em) {
+        this.em = em;
+    }
+    
+    EntityManagerFactory emf;
+    
+    @PersistenceUnit(unitName="test2")
+    public void setEmf(EntityManagerFactory emf) {
+        this.emf = emf;
+    }
 }
